@@ -104,16 +104,16 @@ class HammingEcc {
         var parityBitsRemoved = 0
         var workBits = inputBits
         let extraParity = workBits.last
+      
         workBits.removeLast()
         let length = workBits.count
         var parityCount = 0
-        
         var pos = 0
         while((inputBits.count - parityCount) > (1 << pos - (pos + 1))) {
             parityCount += 1
             pos += 1
         }
-        
+
        // checking whether there are any errors
         var i = 0
         while (i < parityCount)

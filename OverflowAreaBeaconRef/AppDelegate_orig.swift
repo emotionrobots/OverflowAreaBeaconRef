@@ -12,26 +12,18 @@ import CoreLocation
 
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate, BeaconDetectDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, OverflowDetectorDelegate {
     
-    let beaconManager = vBeaconManager.shared
-
+    let fusedBeaconManager = FusedBeaconManager.shared
+    
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        self.do_test()
-        return true
-    }
     
-    //==========================================================================================
-    // Run beacon test
-    //==========================================================================================
-    func do_test() {
-        
         // Get location manager authorization
-        beaconManager.locationManager.requestAlwaysAuthorization()
+        fusedBeaconManager.locationManager.requestAlwaysAuthorization()
 
         // Get allert authorization
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            self.beaconManager.updateAuthWarnings()
+            self.fusedBeaconManager.updateAuthWarnings()
 
             if let error = error {
                 NSLog("error: \(error)")
@@ -46,18 +38,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate, BeaconDetectDelegate {
         BeaconStateModel.shared.myMajor = 1
         BeaconStateModel.shared.myMinor = minor
         
-        beaconManager.configure(beaconUuid: UUID(uuidString: "2F234454-CF6D-4A0F-ADF2-F4911BA9FFA6")!,
-                                major: 1, minor: UInt16(minor), txPower: -59)
-        _ = beaconManager.startRx(delegate: self)
-        _ = beaconManager.startTx()
+        fusedBeaconManager.configure(iBeaconUuid: UUID(uuidString: "2F234454-CF6D-4A0F-ADF2-F4911BA9FFA6")!, overflowMatchingByte: 0xaa,  major: 1, minor: UInt16(minor), measuredPower: -59)
+        _ = fusedBeaconManager.startScanning(delegate: self)
+        _ = fusedBeaconManager.startTx()
 
-        beaconManager.updateAuthWarnings()
+        fusedBeaconManager.updateAuthWarnings()
+        BeaconStateModel.shared.error = fusedBeaconManager.errors.first
+
+        return true
     }
     
+
     //==========================================================================================
     //  Called when beacon is detected. Add the beacon the list for display
     //==========================================================================================
-    func didDetectBeacon(type: String, major: UInt16, minor: UInt16, txPower: Int, rssi: Int, proximityUuid: UUID?, distance: Double?){
+    func didDetectBeacon(type: String, major: UInt16, minor: UInt16, rssi: Int, proximityUuid: UUID?, distance: Double?){
         NSLog("Detected beacon major: \(major) minor: \(minor) of type: \(type)")
         updateBeaconListView(type: type, major: major, minor: minor, rssi: rssi, proximityUuid: proximityUuid, distance: distance)
     }
@@ -85,7 +80,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, BeaconDetectDelegate {
             if (!updatedExisting) {
                 beaconViewItems.append(beaconViewItem)
             }
-            BeaconStateModel.shared.error = self.beaconManager.errors.first
+            BeaconStateModel.shared.error = self.fusedBeaconManager.errors.first
             BeaconStateModel.shared.beacons = beaconViewItems
         }
     }
@@ -103,15 +98,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate, BeaconDetectDelegate {
         // Called when the user discards a scene session.
         // If any sessions were discarded while the application was not running, this will be called shortly after application:didFinishLaunchingWithOptions.
         // Use this method to release any resources that were specific to the discarded scenes, as they will not return.
-    }
-    
-    //=================================================================
-    // Implements OverflowDetectorDelegate -- called for every
-    // detected Beacon
-    //=================================================================
-    func didDetectBeacon(type: String, major: UInt16, minor: UInt16, rssi: Int, proximityUuid: UUID?, distance: Double?){
-        NSLog("Detected \(type) beacon major: \(major) minor: \(minor) of type: \(type)")
-        updateBeaconListView(type: type, major: major, minor: minor, rssi: rssi, proximityUuid: proximityUuid, distance: distance)
     }
 
 }

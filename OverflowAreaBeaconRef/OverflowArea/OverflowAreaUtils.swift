@@ -144,12 +144,16 @@ public class OverflowAreaUtils {
         "00000000-0000-0000-0000-000000000072",
         "00000000-0000-0000-0000-000000000039"
     ]
+    
     private static var _tableOfOverflowServiceUuidsByBitPosition: [CBUUID]? = nil
+    
     public static var TableOfOverflowServiceUuidsByBitPosition: [CBUUID] {
         if _tableOfOverflowServiceUuidsByBitPosition == nil {
             var table: [CBUUID] = []
             for uuidString in TableOfOverflowServiceUuidStringsByBitPosition {
-                table.append(CBUUID(string: uuidString))
+                let uuid = CBUUID(string: uuidString)
+                table.append(uuid)
+                //table.append(CBUUID(string: uuidString))
             }
             _tableOfOverflowServiceUuidsByBitPosition = table
         }
@@ -171,10 +175,16 @@ public class OverflowAreaUtils {
         return _bitPostitionForOverflowServiceUuid ?? [:]
     }
     
+    //==========================================================================================
+    //  Return a list of Overflow Service UUIDs
+    //==========================================================================================
     public static func allOverflowServiceUuids() -> [CBUUID] {
         return TableOfOverflowServiceUuidsByBitPosition
     }
     
+    //==========================================================================================
+    //  Convert the overflow service UUIDs to a Binary strings
+    //==========================================================================================
     public static func overflowServiceUuidsToBinaryString(overflowUuids: [CBUUID]) -> String {
         var binaryString = ""
         var bitPositions: [Int] = []
@@ -194,8 +204,10 @@ public class OverflowAreaUtils {
         return binaryString
     }
     
-    // Returns nil if the advertisement is not an overflow area dvertisement.  Otherwise, returns a
-    // byte arrray indicating which bits are set
+    //==========================================================================================
+    // Returns nil if the advertisement is not an overflow area dvertisement.
+    // Otherwise, returns a byte arrray indicating which bits are set
+    //==========================================================================================
     public static func extractOverflowAreaBytes(advertisementData: [String : Any]) -> [UInt8]? {
         if let overflowUuids = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
             return overflowServiceUuidsToBytes(overflowUuids: overflowUuids)
@@ -203,6 +215,9 @@ public class OverflowAreaUtils {
         return nil
     }
 
+    //==========================================================================================
+    // Convert overflow service uuids to 16-byte array
+    //==========================================================================================
     public static func overflowServiceUuidsToBytes(overflowUuids: [CBUUID]) -> [UInt8] {
         var bytes: [UInt8] = []
         var bitPositions: [Int] = []
@@ -225,6 +240,9 @@ public class OverflowAreaUtils {
         return bytes
     }
 
+    //==========================================================================================
+    //  Convert 128 bit array to Service UUID
+    //==========================================================================================
     public static func bitsToOverflowServiceUuids(bits: [UInt8]) -> [CBUUID] {
         // Each input array element is a bit value of 1 or 0
         var cbUuids: [CBUUID] = []
@@ -236,6 +254,9 @@ public class OverflowAreaUtils {
         return cbUuids
     }
 
+    //==========================================================================================
+    //  Convert 16 byte array to Service UUID
+    //==========================================================================================
     public static func bytesToOverflowServiceUuids(bytes: [UInt8]) -> [CBUUID] {
         var cbUuids: [CBUUID] = []
         for byteNumber in 0...15 {
@@ -249,6 +270,9 @@ public class OverflowAreaUtils {
         return cbUuids
     }
     
+    //==========================================================================================
+    //  Convert 128-bit string array, each element is a '0' or '1', to Service UUID
+    //==========================================================================================
     public static func binaryStringToOverflowServiceUuids(binaryString: String) -> [CBUUID] {
         let binaryCharArray = Array(binaryString)
         var cbUuids: [CBUUID] = []
@@ -260,6 +284,9 @@ public class OverflowAreaUtils {
         return cbUuids
     }
     
+    //==========================================================================================
+    //  Test code
+    //==========================================================================================
     public static func test() {
         let pattern1: [UInt8] = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
         let pattern2: [UInt8] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]

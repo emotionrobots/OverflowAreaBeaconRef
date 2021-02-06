@@ -34,17 +34,32 @@ class BackgroundBeaconManager {
     }
     private var beaconBytes: [UInt8]? = nil
 
+    //==========================================================================================
+    //  Initializer
+    //==========================================================================================
     private init() {
     }
 
+    //==========================================================================================
+    //  Extract Beacon Bytes from Overflow Area advertisementData
+    //==========================================================================================
     public func extractBeaconBytes(peripheral: CBPeripheral, advertisementData: [String : Any], countToExtract: Int) -> [UInt8]? {
         let start = Date().timeIntervalSince1970
         var payload: [UInt8]? = nil
         if let overflowAreaBytes = OverflowAreaUtils.extractOverflowAreaBytes(advertisementData: advertisementData) {
             var buffer = overflowAreaBytes
+           
+          //  print("buffer before removeFirst = ")
+          //  print(buffer)
+            
             buffer.removeFirst(bytePosition)
+            
+           // print("buffer after removeFirst = ")
+           // print(buffer)
+            
             var bitBuffer = HammingEcc().bytesToBits(buffer)
             bitBuffer.removeLast(bitBuffer.count-hammingBitsToDecode)
+                        
             if let goodBits = HammingEcc().decodeBits(bitBuffer) {
                 let bytes = HammingEcc().bitsToBytes(goodBits)
                 if (bytes[0] == matchingByte) {
@@ -66,15 +81,23 @@ class BackgroundBeaconManager {
         if debugLoggingEnabled {
             print("extraction took \(Date().timeIntervalSince1970-start) secs")
         }
+                
         return payload
     }
 
+    //==========================================================================================
+    //  Stoop advertising
+    //==========================================================================================
     public func stopAdvertising() {
         peripheralManager.stopAdvertising()
     }
 
+    //==========================================================================================
+    //  Start background advertising
+    //==========================================================================================
     public func startAdvertising(beaconBytes: [UInt8]) {
         self.beaconBytes = beaconBytes
+        
         // we set the first bit to make it stlll work in the foreground when that bit comes out as a regular service advert
         let overflowAreaBytes: [UInt8] = [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
         var overflowAreaBits = HammingEcc().bytesToBits(overflowAreaBytes)
@@ -96,10 +119,14 @@ class BackgroundBeaconManager {
             }
             NSLog("emitting overflow area advertisement \(bitString)")
         }
-
+        
+      //  print("overflowAreaBits")
+      //  print(overflowAreaBits)
+        
         let adData = [CBAdvertisementDataServiceUUIDsKey : OverflowAreaUtils.bitsToOverflowServiceUuids(bits: overflowAreaBits)]
         peripheralManager.stopAdvertising()
         peripheralManager.startAdvertising(adData)
+        
     }
 
 

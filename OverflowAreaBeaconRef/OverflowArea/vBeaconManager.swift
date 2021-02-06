@@ -1,22 +1,25 @@
+//===========================================================
+//  vBeaconManager.swift
 //
-//  FusedBeaconManager.swift
-//  OverflowAreaBeaconRef
+//  Created by Larry Li on 2/2/21.
+//  Copyright © 2021 E-Motion, Inc. All rights reserved.
 //
-//  Created by David G. Young on 9/9/20.
-//  Copyright © 2020 davidgyoungtech. All rights reserved.
-//
-
+//===========================================================
 import CoreBluetooth
 import CoreLocation
 import UIKit
 
-@objc
-class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerDelegate, CBPeripheralManagerDelegate {
-    static let shared = FusedBeaconManager()
+protocol BeaconDetectDelegate {
+    func didDetectBeacon(type: String, major: UInt16, minor: UInt16, rssi: Int, proximityUuid: UUID?, distance: Double?)
+}
+
+class vBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerDelegate, CBPeripheralManagerDelegate {
+    static let shared = vBeaconManager()
     
-    // Create background manager instance
-    private let backgroundBeaconManager = BackgroundBeaconManager.shared
-    
+    // Public properties
+    public var delegate: BeaconDetectDelegate?
+    public var errors: Set<String> = []
+
     // Create location manager instance
     private var _locationManager: CLLocationManager?
     public var locationManager: CLLocationManager {
@@ -33,43 +36,49 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
         }
     }
     
-    // Peripheral manager and Central Manager variables and work queues
+    // Peripheral manager and work queues
     private var peripheralManager: CBPeripheralManager? = nil
+    private let peripheralQueue = DispatchQueue.global(qos: .userInitiated)
+
+    // Central manager and work queues
     private var centralManager: CBCentralManager? = nil
     private let centralQueue = DispatchQueue.global(qos: .userInitiated)
-    private let peripheralQueue = DispatchQueue.global(qos: .userInitiated)
     
     // Beacon info
     private var beaconUuid: UUID? = nil
     private var beaconMajor: UInt16? = nil
     private var beaconMinor: UInt16? = nil
     private var measuredPower: Int8? = nil
-    public var errors: Set<String> = []
-    private var delegate: BeaconDetectDelegate?
+    private var matchingByte: UInt8 = 0xaa
+    private var beaconBytes: [UInt8]? = nil
+    private var bytePosition = 8
+    // 7 bits added for a 40 bit message (4 byte major minor + matching byte = 5 bytes or 40 bits)
+    private var hammingBitsToDecode = 47
+    
+    // Operational parameters
     private var active = true
     private var initialized = false
     private var txEnabled = false
     private var txStarted = false
     private var scanningEnabled = false
     private var scanningStarted = false
-
+    private var errorMsg = ""
+    
     //==========================================================================================
-    // Configure beacon
+    //  Configure beacon
     //==========================================================================================
-    @objc
-    public func configure(iBeaconUuid: UUID, overflowMatchingByte: UInt8, major: UInt16, minor: UInt16, measuredPower: Int8) {
-        self.backgroundBeaconManager.matchingByte = 0xaa
-        self.beaconUuid = iBeaconUuid
+    @objc public func configure(beaconUuid: UUID, major: UInt16, minor: UInt16, txPower: Int8) {
+        self.matchingByte = 0xaa
+        self.beaconUuid = beaconUuid
         self.beaconMajor = major
         self.beaconMinor = minor
-        self.measuredPower = measuredPower
+        self.measuredPower = txPower
     }
         
     //==========================================================================================
     // Start advertisement - must be called on main thread
     //==========================================================================================
-    @objc
-    public func startTx() -> Bool {
+    @objc public func startTx() -> Bool {
         txEnabled = true
         if (!initialized) {
             initialize()
@@ -79,33 +88,22 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
         }
         if self.peripheralManager?.state == CBManagerState.poweredOn {
             if let major = self.beaconMajor, let minor = self.beaconMinor, let uuid = self.beaconUuid, let power = self.measuredPower {
-                self.backgroundBeaconManager.stopAdvertising()
-                // Always set up to advertise overflow (even when we are in the foreground), because we are blocked from
-                // doing so when we are in the background.
+                self.stopAdvertising()
+                
+                // Set up to advertise overflow area because it can advert in both FG and BG
                 let overflowBytes = [UInt8(major >> 8), UInt8(major & 0xff), UInt8(minor >> 8), UInt8(minor & 0xff)]
-                self.backgroundBeaconManager.startAdvertising(beaconBytes: overflowBytes)
+                self.startAdvertising(beaconBytes: overflowBytes)
                 txStarted = true
-                
-                /*
-                // In the foreground we will immediately overrwrite this advert with iBeacon
-                DispatchQueue.main.asyncAfter(deadline: DispatchTime.now()+0.1) {
-                    self.peripheralManager?.stopAdvertising()
-                    // We are in the foreground.  Advertise iBeacon.  But wait a bit before we do or it does not take effect
-                    let peripheralData = CLBeaconRegion(uuid: uuid, major: major, minor: minor, identifier: "dummy").peripheralData(withMeasuredPower: power as NSNumber)
-                    self.peripheralManager?.startAdvertising(peripheralData as? [String: Any])
-                }
-                */
-                
                 return true
                 
             }
             else {
-              NSLog("Configure not called.  Cannot transmit")
+                errorMsg = "Configure not called.  Cannot transmit"
                 return false
             }
         }
         else {
-            NSLog("Cannot start transmitting without bluetooth powered off")
+            errorMsg = "Cannot start transmitting without bluetooth powered off"
             return false
         }
     }
@@ -113,7 +111,7 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
     //==========================================================================================
     //  Start scanning for beacons
     //==========================================================================================
-    public func startScanning(delegate: BeaconDetectDelegate) -> Bool {
+    public func startRx(delegate: BeaconDetectDelegate) -> Bool {
         scanningEnabled = true;
         self.delegate = delegate
         if (!initialized) {
@@ -135,8 +133,7 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
     //==========================================================================================
     //  Stop scanning
     //==========================================================================================
-    @objc
-    public func stopScanning() {
+    @objc private func stopScanning() {
         scanningEnabled = false
         scanningStarted = false
         if (!initialized) {
@@ -159,7 +156,7 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
             if (!initialized) {
                 initialize()
             }
-            self.backgroundBeaconManager.stopAdvertising()
+            self.stopAdvertising()
             return true
         }
         else {
@@ -196,8 +193,6 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
 
         // Create peripheral manager to advertising beacons
         self.peripheralManager = CBPeripheralManager(delegate: self, queue: peripheralQueue, options: [:])
-        BackgroundBeaconManager.shared.peripheralManager = self.peripheralManager!
-                
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
         locationManager.distanceFilter = 3000.0
@@ -214,6 +209,69 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
         extendBackgroundRunningTime()
     }
 
+    //==========================================================================================
+    //  Stop advertising
+    //==========================================================================================
+    private func stopAdvertising() {
+        self.peripheralManager?.stopAdvertising()
+    }
+
+    //==========================================================================================
+    //  Start advertising
+    //==========================================================================================
+    private func startAdvertising(beaconBytes: [UInt8]) {
+        self.beaconBytes = beaconBytes
+        
+        // we set the first bit to make it stlll work in the foreground when that bit comes out as a regular service advert
+        let overflowAreaBytes: [UInt8] = [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        var overflowAreaBits = HammingEcc().bytesToBits(overflowAreaBytes)
+        
+        var bytesToEncode: [UInt8] = []
+        bytesToEncode.append(matchingByte)
+        bytesToEncode.append(contentsOf: beaconBytes)
+        let encodedBits = HammingEcc().encodeBits(HammingEcc().bytesToBits(bytesToEncode))
+        self.hammingBitsToDecode = encodedBits.count
+        var index = 0
+        for bit in encodedBits {
+            overflowAreaBits[bytePosition*8+index] = bit
+            index += 1
+        }
+                        
+        let adData = [CBAdvertisementDataServiceUUIDsKey : OverflowAreaUtils.bitsToOverflowServiceUuids(bits: overflowAreaBits)]
+        self.peripheralManager?.stopAdvertising()
+        self.peripheralManager?.startAdvertising(adData)
+        
+    }
+    
+    //==========================================================================================
+    //  Extract Beacon Bytes from Overflow Area advertisementData
+    //==========================================================================================
+    private func extractBeaconBytes(peripheral: CBPeripheral, advertisementData: [String : Any], countToExtract: Int) -> [UInt8]? {
+        let start = Date().timeIntervalSince1970
+        var payload: [UInt8]? = nil
+        if let overflowAreaBytes = OverflowAreaUtils.extractOverflowAreaBytes(advertisementData: advertisementData) {
+            var buffer = overflowAreaBytes
+            buffer.removeFirst(bytePosition)
+            var bitBuffer = HammingEcc().bytesToBits(buffer)
+            bitBuffer.removeLast(bitBuffer.count-hammingBitsToDecode)
+                        
+            if let goodBits = HammingEcc().decodeBits(bitBuffer) {
+                let bytes = HammingEcc().bitsToBytes(goodBits)
+                if (bytes[0] == matchingByte) {
+                    payload = bytes
+                    payload?.removeFirst()
+                }
+                else {
+                    NSLog("This is not our overflow area advert")
+                }
+            }
+            else {
+                NSLog("Overflow area advert does not have our beacon data, or it is corrupted")
+            }
+        }
+                        
+        return payload
+    }
     
     //==========================================================================================
     // Start a periodic wake to send notification every 30 seconds
@@ -245,24 +303,24 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
     
     //==========================================================================================
     // Central Manager callback when a state has been updated. State is Bluetooth powered ON
-    // or OFF. If ON, start scanning
+    // or OFF. If ON, start scanning; if OFF, do nothing for now
     //==========================================================================================
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == CBManagerState.poweredOn {
             DispatchQueue.main.async {
                 if self.scanningEnabled && !self.scanningStarted {
                     if let delegate = self.delegate {
-                        _ = self.startScanning(delegate: delegate)
+                        _ = self.startRx(delegate: delegate)
                     }
                 }
                 self.errors.remove("Bluetooth off")
-                BeaconStateModel.shared.error = self.errors.first
+                //BeaconStateModel.shared.error = self.errors.first
             }
         }
         if central.state == CBManagerState.poweredOff {
             DispatchQueue.main.async {
                 self.errors.insert("Bluetooth off")
-                BeaconStateModel.shared.error = self.errors.first
+                //BeaconStateModel.shared.error = self.errors.first
             }
         }
     }
@@ -271,11 +329,12 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
     // Central Manager callback when a periperal has been discovered
     //==========================================================================================
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
-        if let beaconBytes = BackgroundBeaconManager.shared.extractBeaconBytes(peripheral: peripheral, advertisementData: advertisementData, countToExtract: 4) {
+        if let beaconBytes = self.extractBeaconBytes(peripheral: peripheral, advertisementData: advertisementData, countToExtract: 5) {
             let major = UInt16(beaconBytes[0]) << 8 + UInt16(beaconBytes[1])
             let minor = UInt16(beaconBytes[2]) << 8 + UInt16(beaconBytes[3])
             NSLog("I just read overflow area advert with major: \(major) minor: \(minor)")
-            delegate?.didDetectBeacon(type: "OverflowArea", major: major, minor: minor, rssi: RSSI.intValue, proximityUuid: nil, distance: nil)
+            delegate?.didDetectBeacon(type: "OverflowArea", major: major, minor: minor,
+                rssi: RSSI.intValue, proximityUuid: nil, distance: nil)
         }
     }
     
@@ -286,7 +345,7 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
         if peripheral.state == CBManagerState.poweredOn {
             DispatchQueue.main.async {
                 self.errors.remove("Bluetooth off")
-                BeaconStateModel.shared.error = self.errors.first
+               // BeaconStateModel.shared.error = self.errors.first
                 if (self.txEnabled && !self.txStarted) {
                     _ = self.startTx()
                 }
@@ -397,7 +456,7 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
                 self.errors.insert("Notification permission denied")
             }
             DispatchQueue.main.async {
-                BeaconStateModel.shared.error = self.errors.first
+                // BeaconStateModel.shared.error = self.errors.first
             }
         })
     }
@@ -415,8 +474,3 @@ class FusedBeaconManager: NSObject, CLLocationManagerDelegate, CBCentralManagerD
     
 }
 
-/*
-protocol OverflowDetectorDelegate {
-    func didDetectBeacon(type: String, major: UInt16, minor: UInt16, rssi: Int, proximityUuid: UUID?, distance: Double?)
-}
-*/
